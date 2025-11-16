@@ -1427,6 +1427,382 @@ async def general_exception_handler(request, exc):
             "detail": str(exc) if settings.debug else "An error occurred"
         }
     )
+# ============================================================================
+# MINDFRAME ACADEMY - LEARNING SYSTEM ENDPOINTS
+# ============================================================================
+
+@app.get("/api/v1/academy/courses")
+async def list_courses(
+    level: Optional[str] = None,
+    category: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    List all available courses
+
+    Filter by level (laerling, junior, etc.) or category
+    """
+    from src.learning.course_content import get_all_courses, get_courses_by_level
+
+    if level:
+        courses = get_courses_by_level(level)
+    else:
+        courses = get_all_courses()
+
+    if category:
+        courses = [c for c in courses if c.get("category") == category]
+
+    return {
+        "success": True,
+        "total": len(courses),
+        "courses": courses
+    }
+
+
+@app.get("/api/v1/academy/courses/{course_id}")
+async def get_course(
+    course_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get detailed information about a specific course"""
+    from src.learning.course_content import get_course_by_id
+
+    course = get_course_by_id(course_id)
+
+    if not course:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found"
+        )
+
+    return {
+        "success": True,
+        "course": course
+    }
+
+
+@app.post("/api/v1/academy/courses/{course_id}/enroll")
+async def enroll_in_course(
+    course_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Enroll user in a course
+
+    Creates enrollment record and starts tracking progress
+    """
+    from src.learning.course_content import get_course_by_id
+
+    course = get_course_by_id(course_id)
+
+    if not course:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found"
+        )
+
+    # Check if premium course requires subscription
+    if course.get("is_premium") and not current_user.subscription_tier in ["pro", "enterprise"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This course requires Pro or Enterprise subscription"
+        )
+
+    # Create enrollment (would save to database in production)
+    enrollment = {
+        "user_id": current_user.id,
+        "course_id": course_id,
+        "status": "enrolled",
+        "progress_percentage": 0.0,
+        "enrolled_at": datetime.utcnow().isoformat()
+    }
+
+    return {
+        "success": True,
+        "message": f"Successfully enrolled in {course['title']}",
+        "enrollment": enrollment
+    }
+
+
+@app.get("/api/v1/academy/my-courses")
+async def get_my_courses(
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get all courses user is enrolled in"""
+    # In production, query database for user's enrollments
+    # For now, return example
+
+    return {
+        "success": True,
+        "enrollments": []
+    }
+
+
+@app.get("/api/v1/academy/learning-paths")
+async def list_learning_paths(
+    current_user: User = Depends(get_current_active_user)
+):
+    """List all learning paths (e.g., Lærling to CEO)"""
+    from src.learning.course_content import LEARNING_PATHS
+
+    return {
+        "success": True,
+        "paths": list(LEARNING_PATHS.values())
+    }
+
+
+@app.get("/api/v1/academy/learning-paths/{path_id}")
+async def get_learning_path(
+    path_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get detailed information about a learning path"""
+    from src.learning.course_content import get_learning_path
+
+    path = get_learning_path(path_id)
+
+    if not path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Learning path not found"
+        )
+
+    return {
+        "success": True,
+        "path": path
+    }
+
+
+# AI COURSE ASSISTANT ENDPOINTS
+# ============================================================================
+
+@app.post("/api/v1/academy/assistant/ask")
+async def ask_ai_assistant(
+    question: str,
+    course_id: str,
+    lesson_id: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Ask the AI Course Assistant a question
+
+    The AI will answer based on your current lesson and learning progress
+    """
+    from src.learning.ai_course_assistant import MindframeAICourseAssistant, LearningContext
+    from src.learning.course_content import get_course_by_id
+
+    course = get_course_by_id(course_id)
+    if not course:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found"
+        )
+
+    # Build learning context
+    context = LearningContext(
+        user_name=current_user.email.split('@')[0],  # Simple name from email
+        course_title=course['title'],
+        lesson_title=lesson_id or "General",
+        lesson_type="interactive",
+        user_level="laerling",  # Would come from user profile
+        current_progress=0.0,
+        previous_lessons_completed=[],
+        learning_style="hands-on"
+    )
+
+    # Get AI assistant
+    assistant = MindframeAICourseAssistant(openai_api_key=settings.openai_api_key)
+
+    # Get answer
+    answer = await assistant.answer_question(question, context)
+
+    return {
+        "success": True,
+        "answer": answer.dict()
+    }
+
+
+@app.post("/api/v1/academy/assistant/hint")
+async def get_exercise_hint(
+    exercise_id: str,
+    user_attempt: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get a hint for an exercise (without revealing the answer)
+
+    Helps students when they're stuck
+    """
+    from src.learning.ai_course_assistant import MindframeAICourseAssistant, LearningContext
+
+    # Build context
+    context = LearningContext(
+        user_name=current_user.email.split('@')[0],
+        course_title="Current Course",
+        lesson_title="Current Exercise",
+        lesson_type="exercise",
+        user_level="laerling",
+        current_progress=50.0,
+        previous_lessons_completed=[]
+    )
+
+    # Exercise details (would come from database)
+    exercise = {
+        "title": "Build Email Automation",
+        "description": "Create an agent that auto-responds to emails"
+    }
+
+    assistant = MindframeAICourseAssistant(openai_api_key=settings.openai_api_key)
+
+    hint = await assistant.provide_hint(exercise, user_attempt, context)
+
+    return {
+        "success": True,
+        "hint": hint.dict()
+    }
+
+
+@app.post("/api/v1/academy/assistant/explain")
+async def explain_concept(
+    concept: str,
+    user_level: str = "laerling",
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Ask AI to explain a concept in simple terms
+
+    Adapts explanation to user's level (lærling, junior, senior, etc.)
+    """
+    from src.learning.ai_course_assistant import MindframeAICourseAssistant, LearningContext
+
+    context = LearningContext(
+        user_name=current_user.email.split('@')[0],
+        course_title="Mindframe Platform",
+        lesson_title="Concept Explanation",
+        lesson_type="text",
+        user_level=user_level,
+        current_progress=0.0,
+        previous_lessons_completed=[]
+    )
+
+    assistant = MindframeAICourseAssistant(openai_api_key=settings.openai_api_key)
+
+    explanation = await assistant.explain_concept(concept, context)
+
+    return {
+        "success": True,
+        "explanation": explanation.dict()
+    }
+
+
+@app.post("/api/v1/academy/quiz/submit")
+async def submit_quiz_answer(
+    lesson_id: str,
+    question_id: str,
+    answer: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Submit quiz answer and get AI feedback
+
+    The AI will tell you if you're correct and explain why
+    """
+    from src.learning.ai_course_assistant import MindframeAICourseAssistant, LearningContext
+
+    # Quiz question (would come from database)
+    question = {
+        "question": "What is Mindframe?",
+        "correct_answer": "AI automation platform",
+        "explanation": "Mindframe is a complete platform for AI-powered automation"
+    }
+
+    context = LearningContext(
+        user_name=current_user.email.split('@')[0],
+        course_title="Mindframe 101",
+        lesson_title="Quiz",
+        lesson_type="quiz",
+        user_level="laerling",
+        current_progress=75.0,
+        previous_lessons_completed=[]
+    )
+
+    assistant = MindframeAICourseAssistant(openai_api_key=settings.openai_api_key)
+
+    feedback = await assistant.check_quiz_answer(question, answer, context)
+
+    return {
+        "success": True,
+        "feedback": feedback.dict(),
+        "is_correct": answer.lower() == question["correct_answer"].lower()
+    }
+
+
+@app.get("/api/v1/academy/progress")
+async def get_my_progress(
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get user's overall learning progress
+
+    Shows:
+    - Courses enrolled
+    - Completion percentage
+    - Certificates earned
+    - Current level
+    - Recommended next steps
+    """
+    # In production, query database
+    # For now, return example
+
+    return {
+        "success": True,
+        "progress": {
+            "level": "laerling",
+            "courses_enrolled": 3,
+            "courses_completed": 1,
+            "certificates_earned": 1,
+            "total_time_learning_hours": 12,
+            "current_streak_days": 7,
+            "achievements": [
+                "First Course Completed",
+                "First AI Agent Created",
+                "7-Day Learning Streak"
+            ],
+            "recommended_next": [
+                {
+                    "course_id": "ai_agent_builder_fundamentals",
+                    "title": "AI Agent Builder Fundamentals",
+                    "reason": "You've mastered the basics, ready for intermediate!"
+                }
+            ]
+        }
+    }
+
+
+@app.post("/api/v1/academy/certificates/{certificate_id}/download")
+async def download_certificate(
+    certificate_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Download course completion certificate as PDF
+
+    Certificates are verifiable with unique ID
+    """
+    # In production, generate and return PDF
+    # For now, return certificate data
+
+    return {
+        "success": True,
+        "certificate": {
+            "id": certificate_id,
+            "title": "Mindframe Fundamentals Certificate",
+            "issued_to": current_user.email,
+            "issued_at": datetime.utcnow().isoformat(),
+            "verification_url": f"https://mindframe.ai/verify/{certificate_id}",
+            "pdf_url": f"https://mindframe.ai/certificates/{certificate_id}.pdf"
+        }
+    }
 
 
 if __name__ == "__main__":
