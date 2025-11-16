@@ -4,6 +4,7 @@ Ready-to-use agents that customers can install with one click
 """
 from typing import Dict, List
 from src.marketplace.industry_agents import INDUSTRY_AGENTS
+from src.marketplace.income_agents import INCOME_AGENTS
 
 # ============================================================================
 # MARKETPLACE AGENTS LIBRARY
@@ -457,6 +458,12 @@ def get_most_downloaded_agents(limit: int = 10) -> List[Dict]:
 # ============================================================================
 # Add all 40 industry-specific agents to marketplace
 MARKETPLACE_AGENTS.update(INDUSTRY_AGENTS)
+
+# ============================================================================
+# MERGE INCOME GENERATION AGENTS
+# ============================================================================
+# Add all 5 income generation agents to marketplace
+MARKETPLACE_AGENTS.update(INCOME_AGENTS)
 
 
 # Statistics
