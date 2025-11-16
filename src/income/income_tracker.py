@@ -35,7 +35,7 @@ class IncomeTransaction(Base):
     status = Column(String)  # pending, completed, paid
     earned_at = Column(DateTime, default=datetime.utcnow)
     paid_at = Column(DateTime, nullable=True)
-    metadata = Column(String, nullable=True)  # JSON metadata
+    job_metadata = Column(String, nullable=True)  # JSON metadata (renamed from 'metadata')
 
 
 class IncomeStats(BaseModel):
@@ -78,7 +78,7 @@ class IncomeTracker:
         job_title: str,
         amount_nok: float,
         status: str = "completed",
-        metadata: Optional[str] = None
+        job_metadata: Optional[str] = None
     ) -> IncomeTransaction:
         """
         Record income from any bot
@@ -101,7 +101,7 @@ class IncomeTracker:
             status=status,
             earned_at=datetime.utcnow(),
             paid_at=datetime.utcnow() if status == "paid" else None,
-            metadata=metadata
+            job_metadata=job_metadata
         )
 
         self.session.add(transaction)
