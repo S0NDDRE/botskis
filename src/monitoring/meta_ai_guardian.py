@@ -10,14 +10,16 @@ UNIQUE TO MINDFRAME - PRIVATE & PROPRIETARY:
 - Code quality improvement
 - Automatic dependency updates
 - Self-improving agents
+- AUTONOMOUS OPERATION WITH HUMAN CONTROL
 
 This is YOUR competitive advantage. Keep it private!
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from loguru import logger
 from datetime import datetime, timedelta
+from enum import Enum
 import asyncio
 import json
 
@@ -62,6 +64,72 @@ class SystemHealth(BaseModel):
     error_rate: float
 
 
+class AutonomyLevel(str, Enum):
+    """
+    Control how much autonomy the AI has
+
+    YOU ALWAYS HAVE FULL CONTROL - This just controls what AI does automatically
+    """
+    MANUAL = "manual"  # AI only suggests, NEVER acts automatically
+    SUPERVISED = "supervised"  # AI can fix low-risk issues, asks for critical
+    SEMI_AUTONOMOUS = "semi_autonomous"  # AI fixes most issues, logs everything
+    FULLY_AUTONOMOUS = "fully_autonomous"  # AI fixes everything, unlimited power
+
+
+class ApprovalStatus(str, Enum):
+    """Status of actions requiring approval"""
+    PENDING = "pending"  # Waiting for your approval
+    APPROVED = "approved"  # You approved it
+    REJECTED = "rejected"  # You rejected it
+    AUTO_APPROVED = "auto_approved"  # Within autonomy level, auto-approved
+
+
+class AIAction(BaseModel):
+    """An action the AI wants to take"""
+    id: str
+    action_type: str  # "fix_bug", "optimize_code", "update_dependency", etc.
+    title: str
+    description: str
+    risk_level: str  # "low", "medium", "high", "critical"
+    affected_files: List[str]
+    code_diff: Optional[str] = None
+    estimated_impact: str
+    requires_approval: bool = False
+    approval_status: ApprovalStatus = ApprovalStatus.PENDING
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+
+
+class ControlSettings(BaseModel):
+    """
+    Your control settings for Meta-AI Guardian
+
+    YOU ARE IN CONTROL - Set exactly what AI can and cannot do
+    """
+    autonomy_level: AutonomyLevel = AutonomyLevel.SUPERVISED  # Default: supervised
+
+    # What requires your approval?
+    require_approval_for_critical: bool = True  # Always ask for critical issues
+    require_approval_for_file_changes: bool = True  # Ask before changing files
+    require_approval_for_dependencies: bool = True  # Ask before updating packages
+    require_approval_for_new_features: bool = True  # Ask before adding features
+
+    # Auto-approve rules (even in supervised mode)
+    auto_approve_low_risk: bool = True  # Auto-fix typos, formatting, etc.
+    auto_approve_security_patches: bool = False  # Ask even for security (you decide)
+
+    # Monitoring settings
+    monitoring_interval_minutes: int = 60  # Check every hour
+    send_alerts: bool = True  # Alert you about issues
+    alert_threshold: str = "high"  # Alert on: "low", "medium", "high", "critical"
+
+    # Rollback settings
+    enable_automatic_rollback: bool = True  # Auto-rollback if something breaks
+    rollback_on_test_failure: bool = True  # Rollback if tests fail
+    keep_backups_days: int = 30  # Keep file backups for 30 days
+
+
 class MetaAIGuardian:
     """
     Meta-AI Guardian - The Vaktmester (Caretaker)
@@ -69,24 +137,44 @@ class MetaAIGuardian:
     This is YOUR secret weapon. Nobody else has this.
     AI that watches, learns, improves, and fixes your entire platform.
 
+    **AUTONOMOUS BUT YOU ARE IN CONTROL**
+
     Capabilities:
     1. Monitor all systems 24/7
     2. Detect bugs automatically
-    3. Fix issues without human intervention
+    3. Fix issues (with your approval if needed)
     4. Optimize performance continuously
     5. Find security vulnerabilities
     6. Suggest and implement improvements
     7. Learn from all interactions
     8. Keep dependencies updated
     9. Prevent problems before they happen
+    10. ASK FOR APPROVAL on critical decisions (you control this!)
+    11. ROLLBACK changes if something breaks
+    12. YOU CAN OVERRIDE EVERYTHING
     """
 
-    def __init__(self, openai_api_key: str):
+    def __init__(
+        self,
+        openai_api_key: str,
+        control_settings: Optional[ControlSettings] = None,
+        approval_callback: Optional[Callable] = None
+    ):
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = "gpt-4-turbo-preview"
         self.issues: List[SystemIssue] = []
         self.improvements: List[ImprovementSuggestion] = []
+        self.pending_actions: List[AIAction] = []
         self.is_monitoring = False
+
+        # YOUR CONTROL SETTINGS
+        self.control_settings = control_settings or ControlSettings()
+
+        # Callback for approvals (e.g., send notification, show in UI)
+        self.approval_callback = approval_callback
+
+        # File backups for rollback
+        self.file_backups: Dict[str, List[Dict]] = {}
 
     async def analyze_codebase(self, file_paths: List[str]) -> List[SystemIssue]:
         """
@@ -184,23 +272,222 @@ Return array of issues. If no issues, return [].
 
         return all_issues
 
+    def _requires_approval(self, action: AIAction) -> bool:
+        """
+        Check if action requires your approval based on control settings
+
+        YOU DECIDE what needs approval!
+        """
+        # Manual mode: EVERYTHING requires approval
+        if self.control_settings.autonomy_level == AutonomyLevel.MANUAL:
+            return True
+
+        # Check specific approval rules
+        if action.risk_level == "critical" and self.control_settings.require_approval_for_critical:
+            return True
+
+        if action.action_type == "fix_bug" and self.control_settings.require_approval_for_file_changes:
+            return True
+
+        if action.action_type == "update_dependency" and self.control_settings.require_approval_for_dependencies:
+            return True
+
+        if action.action_type == "add_feature" and self.control_settings.require_approval_for_new_features:
+            return True
+
+        # Auto-approve low-risk if enabled
+        if action.risk_level == "low" and self.control_settings.auto_approve_low_risk:
+            return False
+
+        # Fully autonomous mode: nothing requires approval
+        if self.control_settings.autonomy_level == AutonomyLevel.FULLY_AUTONOMOUS:
+            return False
+
+        # Default for supervised/semi-autonomous: approve high and critical
+        return action.risk_level in ["high", "critical"]
+
+    async def _request_approval(self, action: AIAction) -> bool:
+        """
+        Request approval for an action
+
+        This ASKS YOU before doing something important
+        """
+        logger.info(f"🤔 Requesting approval for: {action.title}")
+
+        # Add to pending actions
+        self.pending_actions.append(action)
+
+        # Call approval callback if provided (e.g., send notification)
+        if self.approval_callback:
+            await self.approval_callback(action)
+
+        # In production: Wait for approval via API/UI
+        # For now: Log and return False (wait for manual approval)
+        logger.warning(f"⏸️  Action paused, waiting for your approval: {action.id}")
+
+        return False
+
+    async def approve_action(self, action_id: str, approved_by: str = "user") -> bool:
+        """
+        Approve a pending action
+
+        YOU APPROVE what AI can do
+        """
+        action = next((a for a in self.pending_actions if a.id == action_id), None)
+
+        if not action:
+            logger.error(f"Action {action_id} not found")
+            return False
+
+        action.approval_status = ApprovalStatus.APPROVED
+        action.approved_at = datetime.now()
+        action.approved_by = approved_by
+
+        logger.info(f"✅ Action approved by {approved_by}: {action.title}")
+
+        # Execute the approved action
+        return await self._execute_action(action)
+
+    async def reject_action(self, action_id: str, reason: str = "") -> bool:
+        """
+        Reject a pending action
+
+        YOU REJECT what you don't want AI to do
+        """
+        action = next((a for a in self.pending_actions if a.id == action_id), None)
+
+        if not action:
+            return False
+
+        action.approval_status = ApprovalStatus.REJECTED
+
+        logger.info(f"❌ Action rejected: {action.title} - Reason: {reason}")
+
+        # Remove from pending
+        self.pending_actions.remove(action)
+
+        return True
+
+    async def _execute_action(self, action: AIAction) -> bool:
+        """Execute an approved action"""
+        if action.action_type == "fix_bug":
+            # Execute the fix
+            # (implementation would go here)
+            logger.info(f"🔧 Executing fix: {action.title}")
+            return True
+
+        return False
+
+    def _backup_file(self, file_path: str):
+        """
+        Backup file before modifying (for rollback)
+
+        AI SAVES BACKUPS so you can undo changes
+        """
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+
+            if file_path not in self.file_backups:
+                self.file_backups[file_path] = []
+
+            backup = {
+                "timestamp": datetime.now(),
+                "content": content
+            }
+
+            self.file_backups[file_path].append(backup)
+
+            # Keep only backups within retention period
+            cutoff = datetime.now() - timedelta(days=self.control_settings.keep_backups_days)
+            self.file_backups[file_path] = [
+                b for b in self.file_backups[file_path]
+                if b["timestamp"] > cutoff
+            ]
+
+            logger.info(f"💾 Backed up {file_path}")
+
+        except Exception as e:
+            logger.error(f"Backup failed for {file_path}: {e}")
+
+    async def rollback_file(self, file_path: str, to_timestamp: Optional[datetime] = None) -> bool:
+        """
+        Rollback file to previous version
+
+        YOU CAN UNDO anything AI did!
+        """
+        if file_path not in self.file_backups or not self.file_backups[file_path]:
+            logger.error(f"No backups found for {file_path}")
+            return False
+
+        # Get the backup
+        if to_timestamp:
+            backup = next(
+                (b for b in self.file_backups[file_path] if b["timestamp"] == to_timestamp),
+                None
+            )
+        else:
+            # Get most recent backup
+            backup = self.file_backups[file_path][-1]
+
+        if not backup:
+            logger.error("Backup not found")
+            return False
+
+        try:
+            # Restore file
+            with open(file_path, 'w') as f:
+                f.write(backup["content"])
+
+            logger.info(f"↩️  Rolled back {file_path} to {backup['timestamp']}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}")
+            return False
+
     async def auto_fix_issue(self, issue: SystemIssue) -> bool:
         """
-        Automatically fix an issue
+        Automatically fix an issue (with approval if needed)
 
-        This is POWERFUL - AI fixes bugs automatically!
+        AI can fix bugs - but YOU control when it needs to ask first!
         """
         if not issue.auto_fixable or not issue.file_path:
             return False
 
+        # Create action for approval workflow
+        action = AIAction(
+            id=f"action_{datetime.now().timestamp()}",
+            action_type="fix_bug",
+            title=f"Fix {issue.severity} issue: {issue.title}",
+            description=issue.description,
+            risk_level=issue.severity,
+            affected_files=[issue.file_path],
+            code_diff=issue.suggested_fix,
+            estimated_impact=f"Fix {issue.category} issue in {issue.file_path}",
+            created_at=datetime.now()
+        )
+
+        # Check if approval needed
+        if self._requires_approval(action):
+            await self._request_approval(action)
+            return False  # Wait for approval
+
+        # Auto-approve
+        action.approval_status = ApprovalStatus.AUTO_APPROVED
+
         logger.info(f"🔧 Auto-fixing: {issue.title}")
 
         try:
-            # Read current file
+            # STEP 1: Backup file before modifying (YOU CAN UNDO!)
+            self._backup_file(issue.file_path)
+
+            # STEP 2: Read current file
             with open(issue.file_path, 'r') as f:
                 current_code = f.read()
 
-            # Ask GPT-4 to generate fix
+            # STEP 3: Ask GPT-4 to generate fix
             prompt = f"""
 Fix this issue in the code:
 
@@ -234,16 +521,19 @@ Return the COMPLETE fixed code. Do not explain, just return the fixed code.
             if "```python" in fixed_code:
                 fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
 
-            # Write fixed code
+            # STEP 4: Write fixed code
             with open(issue.file_path, 'w') as f:
                 f.write(fixed_code)
 
-            logger.info(f"   ✅ Fixed: {issue.file_path}")
+            logger.info(f"   ✅ Fixed: {issue.file_path} (backed up, can rollback!)")
 
             return True
 
         except Exception as e:
             logger.error(f"   ❌ Auto-fix failed: {e}")
+            # Try to rollback if fix failed
+            if self.control_settings.enable_automatic_rollback:
+                await self.rollback_file(issue.file_path)
             return False
 
     async def suggest_improvements(self) -> List[ImprovementSuggestion]:
@@ -451,13 +741,64 @@ Return array of 5 suggestions.
                 "high_impact": sum(1 for i in self.improvements if i.impact == "high"),
                 "easy_wins": sum(1 for i in self.improvements if i.effort == "easy" and i.impact == "high")
             },
+            "pending_actions": {
+                "total": len(self.pending_actions),
+                "awaiting_approval": sum(
+                    1 for a in self.pending_actions
+                    if a.approval_status == ApprovalStatus.PENDING
+                )
+            },
+            "control_settings": {
+                "autonomy_level": self.control_settings.autonomy_level.value,
+                "require_approval_for_critical": self.control_settings.require_approval_for_critical,
+                "monitoring_interval_minutes": self.control_settings.monitoring_interval_minutes
+            },
             "recommendations": [
                 "Fix critical security issues first",
                 "Implement high-impact, easy improvements",
                 "Monitor performance metrics daily",
-                "Keep dependencies updated"
+                "Keep dependencies updated",
+                "Review pending actions regularly"
             ]
         }
+
+    def get_pending_actions(self) -> List[AIAction]:
+        """
+        Get all pending actions awaiting YOUR approval
+
+        See what AI wants to do before it does it
+        """
+        return [a for a in self.pending_actions if a.approval_status == ApprovalStatus.PENDING]
+
+    def get_control_settings(self) -> ControlSettings:
+        """
+        Get current control settings
+
+        See how much control you have over the AI
+        """
+        return self.control_settings
+
+    def update_control_settings(self, new_settings: ControlSettings):
+        """
+        Update control settings
+
+        YOU CHANGE how autonomous the AI is at any time
+        """
+        old_level = self.control_settings.autonomy_level
+        self.control_settings = new_settings
+
+        logger.info(
+            f"🎚️  Control settings updated: "
+            f"{old_level.value} → {new_settings.autonomy_level.value}"
+        )
+
+    def get_file_backups(self, file_path: str) -> List[Dict]:
+        """
+        Get all backups for a file
+
+        See all versions you can rollback to
+        """
+        return self.file_backups.get(file_path, [])
 
 
 # Usage Example

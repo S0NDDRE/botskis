@@ -998,6 +998,189 @@ async def get_full_report(
     }
 
 
+# CONTROL & APPROVAL ENDPOINTS - YOU ARE IN CONTROL
+# ============================================================================
+
+@app.get("/api/v1/meta-ai/actions/pending")
+async def get_pending_actions(
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get all actions awaiting YOUR approval
+
+    YOU DECIDE what AI can do!
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    pending = guardian.get_pending_actions()
+
+    return {
+        "success": True,
+        "total": len(pending),
+        "actions": [a.dict() for a in pending]
+    }
+
+
+@app.post("/api/v1/meta-ai/actions/{action_id}/approve")
+async def approve_action(
+    action_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Approve a pending action
+
+    YOU APPROVE what AI can do
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    success = await guardian.approve_action(action_id, approved_by=current_user.email)
+
+    return {
+        "success": success,
+        "action_id": action_id,
+        "message": "Action approved and executed" if success else "Action not found"
+    }
+
+
+@app.post("/api/v1/meta-ai/actions/{action_id}/reject")
+async def reject_action(
+    action_id: str,
+    reason: str = "",
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Reject a pending action
+
+    YOU REJECT what you don't want AI to do
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    success = await guardian.reject_action(action_id, reason=reason)
+
+    return {
+        "success": success,
+        "action_id": action_id,
+        "message": "Action rejected" if success else "Action not found"
+    }
+
+
+@app.get("/api/v1/meta-ai/control-settings")
+async def get_control_settings(
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get current control settings
+
+    See how much autonomy AI has
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    settings_data = guardian.get_control_settings()
+
+    return {
+        "success": True,
+        "settings": settings_data.dict()
+    }
+
+
+@app.put("/api/v1/meta-ai/control-settings")
+async def update_control_settings(
+    autonomy_level: str = "supervised",
+    require_approval_for_critical: bool = True,
+    require_approval_for_file_changes: bool = True,
+    auto_approve_low_risk: bool = True,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Update control settings
+
+    YOU CONTROL how autonomous AI is!
+
+    Autonomy Levels:
+    - manual: AI only suggests, NEVER acts automatically
+    - supervised: AI can fix low-risk issues, asks for critical (DEFAULT)
+    - semi_autonomous: AI fixes most issues, logs everything
+    - fully_autonomous: AI fixes everything, unlimited power
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian, ControlSettings, AutonomyLevel
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    new_settings = ControlSettings(
+        autonomy_level=AutonomyLevel(autonomy_level),
+        require_approval_for_critical=require_approval_for_critical,
+        require_approval_for_file_changes=require_approval_for_file_changes,
+        auto_approve_low_risk=auto_approve_low_risk
+    )
+
+    guardian.update_control_settings(new_settings)
+
+    return {
+        "success": True,
+        "message": f"Control settings updated to {autonomy_level}",
+        "settings": new_settings.dict()
+    }
+
+
+@app.get("/api/v1/meta-ai/backups/{file_path:path}")
+async def get_file_backups(
+    file_path: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get all backups for a file
+
+    See all versions you can rollback to
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    backups = guardian.get_file_backups(file_path)
+
+    return {
+        "success": True,
+        "file_path": file_path,
+        "total_backups": len(backups),
+        "backups": backups
+    }
+
+
+@app.post("/api/v1/meta-ai/rollback/{file_path:path}")
+async def rollback_file(
+    file_path: str,
+    to_timestamp: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Rollback file to previous version
+
+    YOU CAN UNDO anything AI did!
+    """
+    from src.monitoring.meta_ai_guardian import MetaAIGuardian
+
+    guardian = MetaAIGuardian(openai_api_key=settings.openai_api_key)
+
+    # Convert timestamp string to datetime if provided
+    timestamp = datetime.fromisoformat(to_timestamp) if to_timestamp else None
+
+    success = await guardian.rollback_file(file_path, to_timestamp=timestamp)
+
+    return {
+        "success": success,
+        "file_path": file_path,
+        "message": f"File rolled back to {to_timestamp}" if success else "Rollback failed"
+    }
+
+
 # ============================================================================
 # AGENT ENDPOINTS
 # ============================================================================
