@@ -3,6 +3,7 @@ Mindframe Marketplace - Pre-built AI Agents Library
 Ready-to-use agents that customers can install with one click
 """
 from typing import Dict, List
+from src.marketplace.industry_agents import INDUSTRY_AGENTS
 
 # ============================================================================
 # MARKETPLACE AGENTS LIBRARY
@@ -451,6 +452,13 @@ def get_most_downloaded_agents(limit: int = 10) -> List[Dict]:
     return sorted_agents[:limit]
 
 
+# ============================================================================
+# MERGE INDUSTRY-SPECIFIC AGENTS
+# ============================================================================
+# Add all 40 industry-specific agents to marketplace
+MARKETPLACE_AGENTS.update(INDUSTRY_AGENTS)
+
+
 # Statistics
 def get_marketplace_stats() -> Dict:
     """Get marketplace statistics"""
@@ -459,6 +467,7 @@ def get_marketplace_stats() -> Dict:
         "free_agents": len(get_free_agents()),
         "premium_agents": len(get_premium_agents()),
         "total_downloads": sum(agent.get("downloads", 0) for agent in MARKETPLACE_AGENTS.values()),
-        "average_rating": sum(agent.get("rating", 0) for agent in MARKETPLACE_AGENTS.values()) / len(MARKETPLACE_AGENTS),
-        "categories": list(set(agent.get("category") for agent in MARKETPLACE_AGENTS.values()))
+        "average_rating": sum(agent.get("rating", 0) for agent in MARKETPLACE_AGENTS.values()) / len(MARKETPLACE_AGENTS) if len(MARKETPLACE_AGENTS) > 0 else 0,
+        "categories": list(set(agent.get("category") for agent in MARKETPLACE_AGENTS.values())),
+        "industries": list(set(agent.get("industry") for agent in MARKETPLACE_AGENTS.values() if agent.get("industry")))
     }
