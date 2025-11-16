@@ -19,7 +19,7 @@ from src.monitoring.auto_healing import AutoHealingSystem
 from src.core.security import hash_password, verify_password, create_access_token, Token
 from src.core.auth import get_current_user, get_current_active_user
 from src.api.middleware import setup_middleware, limiter, log_agent_action
-from src.api.websocket import manager, handle_websocket_message
+from src.api.websocket import manager, handle_websocket_message, authenticate_websocket
 from src.core.ai_agent_generator import MindframeAgentGenerator
 
 # Initialize FastAPI app
@@ -1351,19 +1351,32 @@ async def get_agent_health(agent_id: int):
 # WEBSOCKET ENDPOINTS
 # ============================================================================
 
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: int):
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time updates
+    WebSocket endpoint for real-time updates (WITH AUTHENTICATION)
 
     Usage:
-        ws://localhost:8000/ws/1
+        Method 1 - Token in query parameter:
+            ws://localhost:8000/ws?token=YOUR_JWT_TOKEN
+
+        Method 2 - Token in first message:
+            ws://localhost:8000/ws
+            Then send: {"type": "auth", "token": "YOUR_JWT_TOKEN"}
 
     Messages:
         {"type": "ping"}
         {"type": "subscribe_agent", "agent_id": 123}
         {"type": "request_metrics"}
     """
+    # Authenticate WebSocket connection
+    user_id = await authenticate_websocket(websocket)
+
+    if user_id is None:
+        # Authentication failed, connection already closed
+        return
+
+    # Connect authenticated websocket
     await manager.connect(websocket, user_id)
 
     try:

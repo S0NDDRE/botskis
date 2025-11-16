@@ -1,11 +1,13 @@
 """
-WebSocket support for real-time updates
+WebSocket support for real-time updates with JWT authentication
 """
-from fastapi import WebSocket, WebSocketDisconnect
-from typing import Dict, List, Set
+from fastapi import WebSocket, WebSocketDisconnect, status
+from typing import Dict, List, Set, Optional
 import json
 import asyncio
 from loguru import logger
+from jose import jwt, JWTError
+from config.settings import settings
 
 
 class ConnectionManager:
@@ -171,6 +173,117 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# ============================================================================
+# WEBSOCKET AUTHENTICATION
+# ============================================================================
+
+async def verify_websocket_token(websocket: WebSocket, token: str) -> Optional[dict]:
+    """
+    Verify JWT token for WebSocket connection
+
+    Args:
+        websocket: WebSocket connection
+        token: JWT token from client
+
+    Returns:
+        User data if valid, None if invalid
+    """
+    try:
+        # Decode JWT token
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.jwt_algorithm]
+        )
+
+        user_id = payload.get("user_id")
+        email = payload.get("email")
+
+        if user_id is None:
+            logger.warning("WebSocket auth failed: Missing user_id in token")
+            return None
+
+        return {
+            "user_id": user_id,
+            "email": email
+        }
+
+    except JWTError as e:
+        logger.warning(f"WebSocket auth failed: Invalid token - {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"WebSocket auth error: {str(e)}")
+        return None
+
+
+async def authenticate_websocket(websocket: WebSocket) -> Optional[int]:
+    """
+    Authenticate WebSocket connection
+
+    Supports two methods:
+    1. Token in query parameter: ws://host/ws?token=xxx
+    2. Token in first message: {"type": "auth", "token": "xxx"}
+
+    Args:
+        websocket: WebSocket connection
+
+    Returns:
+        user_id if authenticated, None if authentication failed
+    """
+    try:
+        # Method 1: Try to get token from query parameters
+        token = websocket.query_params.get("token")
+
+        if token:
+            user_data = await verify_websocket_token(websocket, token)
+            if user_data:
+                logger.info(f"WebSocket authenticated via query param: user_id={user_data['user_id']}")
+                return user_data["user_id"]
+
+        # Method 2: Wait for authentication message
+        # Accept connection first to receive auth message
+        await websocket.accept()
+
+        # Wait for auth message (5 second timeout)
+        try:
+            data = await asyncio.wait_for(
+                websocket.receive_json(),
+                timeout=5.0
+            )
+
+            if data.get("type") == "auth":
+                token = data.get("token")
+                if token:
+                    user_data = await verify_websocket_token(websocket, token)
+                    if user_data:
+                        # Send auth success message
+                        await websocket.send_json({
+                            "type": "auth_success",
+                            "user_id": user_data["user_id"]
+                        })
+                        logger.info(f"WebSocket authenticated via message: user_id={user_data['user_id']}")
+                        return user_data["user_id"]
+
+        except asyncio.TimeoutError:
+            logger.warning("WebSocket auth timeout: No auth message received")
+
+        # Authentication failed
+        await websocket.send_json({
+            "type": "auth_failed",
+            "message": "Authentication required"
+        })
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return None
+
+    except Exception as e:
+        logger.error(f"WebSocket authentication error: {str(e)}")
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        except:
+            pass
+        return None
+
+
 async def handle_websocket_message(websocket: WebSocket, user_id: int, data: dict):
     """
     Handle incoming WebSocket messages from client
@@ -203,13 +316,21 @@ async def handle_websocket_message(websocket: WebSocket, user_id: int, data: dic
         logger.warning(f"Unknown message type: {message_type}")
 
 
-# Usage example in main.py:
+# Usage example in main.py (WITH AUTHENTICATION):
 """
 from fastapi import WebSocket
-from src.api.websocket import manager, handle_websocket_message
+from src.api.websocket import manager, handle_websocket_message, authenticate_websocket
 
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: int):
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    # Authenticate WebSocket connection
+    user_id = await authenticate_websocket(websocket)
+
+    if user_id is None:
+        # Authentication failed, connection already closed
+        return
+
+    # Connect authenticated websocket
     await manager.connect(websocket, user_id)
 
     try:
@@ -219,4 +340,18 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)
+
+
+# Client-side usage:
+# Method 1: Token in query parameter
+ws = new WebSocket('ws://localhost:8000/ws?token=YOUR_JWT_TOKEN');
+
+# Method 2: Token in first message
+ws = new WebSocket('ws://localhost:8000/ws');
+ws.onopen = () => {
+    ws.send(JSON.stringify({
+        type: 'auth',
+        token: 'YOUR_JWT_TOKEN'
+    }));
+};
 """
