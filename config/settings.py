@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     """Application settings"""
 
     # App
-    app_name: str = "Botskis"
+    app_name: str = "Mindframe"
     environment: str = "development"
     debug: bool = True
     secret_key: str
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # Email
     sendgrid_api_key: str
-    from_email: str = "noreply@botskis.com"
+    from_email: str = "noreply@mindframe.ai"
 
     # Monitoring
     sentry_dsn: Optional[str] = None
