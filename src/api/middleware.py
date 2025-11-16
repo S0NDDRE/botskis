@@ -114,11 +114,33 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
-    Middleware for adding security headers
+    Middleware for adding security headers and basic input validation
     """
 
     async def dispatch(self, request: Request, call_next):
-        """Add security headers to response"""
+        """Add security headers and validate input"""
+        import re
+
+        # Check for XSS patterns in query parameters
+        if request.query_params:
+            for key, value in request.query_params.items():
+                if self._contains_xss(value):
+                    logger.warning(f"XSS attempt detected in query param: {key}={value}")
+                    return JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"error": "Invalid input detected"}
+                    )
+
+        # Check for SQL injection patterns
+        if request.query_params:
+            for key, value in request.query_params.items():
+                if self._contains_sql_injection(value):
+                    logger.warning(f"SQL injection attempt detected: {key}={value}")
+                    return JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"error": "Invalid input detected"}
+                    )
+
         response = await call_next(request)
 
         # Security headers
@@ -126,8 +148,53 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' https://api.openai.com"
+        )
 
         return response
+
+    def _contains_xss(self, value: str) -> bool:
+        """Check if value contains common XSS patterns"""
+        import re
+        xss_patterns = [
+            r'<script[^>]*>.*?</script>',
+            r'javascript:',
+            r'on\w+\s*=',  # Event handlers like onclick=
+            r'<iframe',
+            r'<object',
+            r'<embed',
+            r'eval\(',
+            r'expression\('
+        ]
+
+        for pattern in xss_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                return True
+        return False
+
+    def _contains_sql_injection(self, value: str) -> bool:
+        """Check if value contains SQL injection patterns"""
+        import re
+        sql_patterns = [
+            r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC)\b)",
+            r"(--|#|\/\*|\*\/)",  # SQL comments
+            r"(\bOR\b.*?=.*?=)",  # OR 1=1
+            r"(\bUNION\b.*?\bSELECT\b)",
+            r"';",
+            r"1=1",
+            r"' OR '1'='1"
+        ]
+
+        for pattern in sql_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                return True
+        return False
 
 
 def setup_middleware(app):
@@ -146,7 +213,7 @@ def setup_middleware(app):
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    logger.info("Middleware configured successfully")
+    logger.success("✅ Security middleware configured successfully")
 
 
 # Custom logger for specific use cases
