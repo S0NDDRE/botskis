@@ -2,7 +2,7 @@
 FastAPI Application - Main API
 Complete REST API for Botskis platform
 """
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -16,6 +16,10 @@ from src.database.models import User, Agent, AgentTemplate, OnboardingSession
 from src.core.onboarding_wizard import OnboardingWizard, OnboardingAnswer
 from src.marketplace.agent_marketplace import AgentMarketplace
 from src.monitoring.auto_healing import AutoHealingSystem
+from src.core.security import hash_password, verify_password, create_access_token, Token
+from src.core.auth import get_current_user, get_current_active_user
+from src.api.middleware import setup_middleware, limiter, log_agent_action
+from src.api.websocket import manager, handle_websocket_message
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -34,6 +38,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Setup custom middleware (logging, error handling, rate limiting, security)
+setup_middleware(app)
 
 # Initialize components
 onboarding_wizard = OnboardingWizard(openai_api_key=settings.openai_api_key)
@@ -95,6 +102,11 @@ class AgentResponse(BaseModel):
         from_attributes = True
 
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
 # ============================================================================
 # HEALTH & STATUS ENDPOINTS
 # ============================================================================
@@ -152,10 +164,10 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
             detail="Email already registered"
         )
 
-    # Create user (hash password in production)
+    # Create user with hashed password
     new_user = User(
         email=user.email,
-        hashed_password=user.password,  # Hash this!
+        hashed_password=hash_password(user.password),
         full_name=user.full_name,
         company=user.company
     )
@@ -164,6 +176,33 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
 
     return new_user
+
+
+@app.post("/api/v1/auth/login", response_model=Token)
+async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
+    """Login and get access token"""
+    # Find user
+    user = db.query(User).filter(User.email == login_data.email).first()
+
+    if not user or not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user"
+        )
+
+    # Create access token
+    access_token = create_access_token(
+        data={"user_id": user.id, "email": user.email}
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @app.get("/api/v1/users/{user_id}", response_model=UserResponse)
@@ -508,6 +547,34 @@ async def get_agent_health(agent_id: int):
 
 
 # ============================================================================
+# WEBSOCKET ENDPOINTS
+# ============================================================================
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    """
+    WebSocket endpoint for real-time updates
+
+    Usage:
+        ws://localhost:8000/ws/1
+
+    Messages:
+        {"type": "ping"}
+        {"type": "subscribe_agent", "agent_id": 123}
+        {"type": "request_metrics"}
+    """
+    await manager.connect(websocket, user_id)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await handle_websocket_message(websocket, user_id, data)
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, user_id)
+
+
+# ============================================================================
 # STARTUP/SHUTDOWN EVENTS
 # ============================================================================
 
@@ -524,6 +591,7 @@ async def startup_event():
         init_db()
 
     print("API ready!")
+    print(f"WebSocket endpoint: ws://localhost:{settings.port}/ws/{{user_id}}")
 
 
 @app.on_event("shutdown")
