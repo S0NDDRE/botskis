@@ -1,137 +1,138 @@
-/**
- * Main App - Factory Floor Control Center
- */
-import { useEffect } from 'react'
-import { DndProvider } from 'react-dnd'
-import { HTML5Backend } from 'react-dnd-html5-backend'
-import { FactoryFloor } from './components/FactoryFloor'
-import { Sidebar } from './components/Sidebar'
-import { CommandPalette } from './components/CommandPalette'
-import { useFactoryStore } from './store/factoryStore'
-import { Terminal, Zap, Eye } from 'lucide-react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { Toaster } from 'react-hot-toast'
+import { useAuthStore } from './stores/authStore'
+
+// Layouts
+import DashboardLayout from './components/layouts/DashboardLayout'
+import AuthLayout from './components/layouts/AuthLayout'
+
+// Auth Pages
+import LoginPage from './pages/auth/LoginPage'
+import RegisterPage from './pages/auth/RegisterPage'
+
+// Dashboard Pages
+import DashboardHome from './pages/dashboard/DashboardHome'
+
+// Academy Pages
+import AcademyDashboard from './pages/academy/AcademyDashboard'
+import CourseList from './pages/academy/CourseList'
+import CoursePlayer from './pages/academy/CoursePlayer'
+import LearningPaths from './pages/academy/LearningPaths'
+import MyCourses from './pages/academy/MyCourses'
+import Certificates from './pages/academy/Certificates'
+
+// AI Agent Pages
+import AIAgentList from './pages/agents/AIAgentList'
+import AIAgentCreate from './pages/agents/AIAgentCreate'
+import AIAgentDetail from './pages/agents/AIAgentDetail'
+
+// Voice AI Pages
+import VoiceAIDashboard from './pages/voice/VoiceAIDashboard'
+import VoiceAgents from './pages/voice/VoiceAgents'
+import CallHistory from './pages/voice/CallHistory'
+
+// Meta-AI Guardian Pages
+import GuardianDashboard from './pages/guardian/GuardianDashboard'
+import ApprovalQueue from './pages/guardian/ApprovalQueue'
+import OptimizationHistory from './pages/guardian/OptimizationHistory'
+
+// Analytics Pages
+import Analytics from './pages/analytics/Analytics'
+import Reports from './pages/analytics/Reports'
+
+// Marketplace
+import Marketplace from './pages/marketplace/Marketplace'
+import MarketplaceDetail from './pages/marketplace/MarketplaceDetail'
+
+// Settings Pages
+import Settings from './pages/settings/Settings'
+import TeamSettings from './pages/settings/TeamSettings'
+import BillingSettings from './pages/settings/BillingSettings'
+import Webhooks from './pages/settings/Webhooks'
+
+// Protected Route Component
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuthStore()
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+  
+  return <>{children}</>
+}
 
 function App() {
-  const { loadAgents, loadTemplates, toggleCommandPalette, refreshMetrics, viewMode, setViewMode } =
-    useFactoryStore()
-
-  // Load data on mount
-  useEffect(() => {
-    const userId = 1 // TODO: Get from auth
-    loadAgents(userId)
-    loadTemplates()
-    refreshMetrics()
-
-    // Refresh metrics every 10 seconds
-    const interval = setInterval(() => {
-      refreshMetrics()
-    }, 10000)
-
-    return () => clearInterval(interval)
-  }, [])
-
   return (
-    <DndProvider backend={HTML5Backend}>
-      <div className="w-screen h-screen bg-factory-floor flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="bg-factory-machine border-b border-gray-700 px-6 py-3 flex items-center justify-between z-20">
-          <div className="flex items-center gap-3">
-            <div className="text-3xl">🏭</div>
-            <div>
-              <h1 className="text-white text-xl font-bold">Botskis Factory Floor</h1>
-              <p className="text-gray-400 text-sm">Your AI Agent Control Center</p>
-            </div>
-          </div>
+    <>
+      <Routes>
+        {/* Auth Routes */}
+        <Route element={<AuthLayout />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+        </Route>
 
-          <div className="flex items-center gap-2">
-            {/* View mode toggle */}
-            <div className="flex bg-factory-floor rounded-lg p-1">
-              <button
-                onClick={() => setViewMode('2d')}
-                className={`px-3 py-1.5 rounded text-sm transition-colors ${
-                  viewMode === '2d'
-                    ? 'bg-blue-500 text-white'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                2D View
-              </button>
-              <button
-                onClick={() => setViewMode('3d')}
-                className={`px-3 py-1.5 rounded text-sm transition-colors ${
-                  viewMode === '3d'
-                    ? 'bg-blue-500 text-white'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-                title="3D View (Coming Soon)"
-              >
-                3D View
-              </button>
-            </div>
+        {/* Dashboard Routes */}
+        <Route
+          element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+          {/* Home */}
+          <Route path="/" element={<DashboardHome />} />
+          
+          {/* Academy */}
+          <Route path="/academy" element={<AcademyDashboard />} />
+          <Route path="/academy/courses" element={<CourseList />} />
+          <Route path="/academy/courses/:courseId" element={<CoursePlayer />} />
+          <Route path="/academy/paths" element={<LearningPaths />} />
+          <Route path="/academy/my-courses" element={<MyCourses />} />
+          <Route path="/academy/certificates" element={<Certificates />} />
+          
+          {/* AI Agents */}
+          <Route path="/agents" element={<AIAgentList />} />
+          <Route path="/agents/create" element={<AIAgentCreate />} />
+          <Route path="/agents/:agentId" element={<AIAgentDetail />} />
+          
+          {/* Voice AI */}
+          <Route path="/voice" element={<VoiceAIDashboard />} />
+          <Route path="/voice/agents" element={<VoiceAgents />} />
+          <Route path="/voice/calls" element={<CallHistory />} />
+          
+          {/* Meta-AI Guardian */}
+          <Route path="/guardian" element={<GuardianDashboard />} />
+          <Route path="/guardian/approvals" element={<ApprovalQueue />} />
+          <Route path="/guardian/history" element={<OptimizationHistory />} />
+          
+          {/* Analytics */}
+          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/reports" element={<Reports />} />
+          
+          {/* Marketplace */}
+          <Route path="/marketplace" element={<Marketplace />} />
+          <Route path="/marketplace/:agentId" element={<MarketplaceDetail />} />
+          
+          {/* Settings */}
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/team" element={<TeamSettings />} />
+          <Route path="/settings/billing" element={<BillingSettings />} />
+          <Route path="/settings/webhooks" element={<Webhooks />} />
+        </Route>
 
-            {/* Command palette button */}
-            <button
-              onClick={toggleCommandPalette}
-              className="flex items-center gap-2 px-4 py-2 bg-factory-floor hover:bg-factory-active rounded-lg transition-colors"
-            >
-              <Terminal className="w-4 h-4 text-white" />
-              <span className="text-white text-sm">Command</span>
-              <kbd className="px-2 py-0.5 text-xs text-gray-400 bg-gray-800 rounded">⌘K</kbd>
-            </button>
+        {/* Catch all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
 
-            {/* Quick actions */}
-            <div className="flex gap-1">
-              <button
-                onClick={() => refreshMetrics()}
-                className="p-2 bg-factory-floor hover:bg-factory-active rounded-lg transition-colors"
-                title="Refresh Metrics"
-              >
-                <Zap className="w-4 h-4 text-yellow-400" />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {/* Main content */}
-        <div className="flex-1 flex overflow-hidden relative">
-          {/* Sidebar */}
-          <Sidebar />
-
-          {/* Factory Floor */}
-          <div className="flex-1 relative">
-            {viewMode === '2d' ? (
-              <FactoryFloor />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-factory-floor">
-                <div className="text-center text-gray-500">
-                  <Eye className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-                  <h3 className="text-xl font-semibold mb-2">3D View Coming Soon</h3>
-                  <p className="text-sm">Experience your factory floor in stunning 3D</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Command Palette */}
-        <CommandPalette />
-
-        {/* Status bar */}
-        <footer className="bg-factory-machine border-t border-gray-700 px-6 py-2 flex items-center justify-between text-xs text-gray-400 z-20">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span>System Online</span>
-            </div>
-            <div>API: http://localhost:8000</div>
-          </div>
-          <div className="flex items-center gap-4">
-            <span>Press ⌘K for commands</span>
-            <span>Drag agents from sidebar</span>
-            <span>v1.0.0</span>
-          </div>
-        </footer>
-      </div>
-    </DndProvider>
+      {/* Toast Notifications */}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 3000,
+          className: 'dark:bg-gray-800 dark:text-white',
+        }}
+      />
+    </>
   )
 }
 
