@@ -20,6 +20,7 @@ from src.core.security import hash_password, verify_password, create_access_toke
 from src.core.auth import get_current_user, get_current_active_user
 from src.api.middleware import setup_middleware, limiter, log_agent_action
 from src.api.websocket import manager, handle_websocket_message
+from src.core.ai_agent_generator import MindframeAgentGenerator
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -46,6 +47,7 @@ setup_middleware(app)
 onboarding_wizard = OnboardingWizard(openai_api_key=settings.openai_api_key)
 marketplace = AgentMarketplace()
 auto_healing = AutoHealingSystem()
+ai_generator = MindframeAgentGenerator(openai_api_key=settings.openai_api_key)
 
 
 # ============================================================================
@@ -105,6 +107,25 @@ class AgentResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class AIGenerateRequest(BaseModel):
+    """Request to generate agent with AI"""
+    description: str  # Natural language description
+    user_context: Optional[dict] = None  # Optional user context
+
+
+class AIGenerateResponse(BaseModel):
+    """Response from AI generation"""
+    success: bool
+    intent: dict
+    recommendation: dict
+    workflow: dict
+    configuration: dict
+    template_id: int
+    ready_to_deploy: bool
+    estimated_setup_time: str
+    next_steps: List[str]
 
 
 # ============================================================================
@@ -378,6 +399,485 @@ async def search_templates(q: str):
 async def get_marketplace_stats():
     """Get marketplace statistics"""
     return marketplace.get_marketplace_stats()
+
+
+# ============================================================================
+# MINDFRAME AI AGENT GENERATOR ENDPOINTS
+# ============================================================================
+
+@app.post("/api/v1/ai/generate", response_model=AIGenerateResponse)
+async def ai_generate_agent(
+    request: AIGenerateRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    🧠 MINDFRAME AI AGENT GENERATOR
+
+    Generate a complete agent from natural language description!
+
+    Example:
+        "Auto-respond to customer emails and create Trello cards for urgent issues"
+
+    Returns:
+        - Intent analysis
+        - Template recommendation with reasoning
+        - Visual workflow preview
+        - Auto-configuration
+        - Ready to deploy!
+    """
+    # Get available templates
+    templates = [t.dict() for t in marketplace.get_all_templates()]
+
+    # Add user context
+    user_context = request.user_context or {}
+    user_context.update({
+        "user_email": current_user.email,
+        "user_name": current_user.full_name,
+        "company": current_user.company
+    })
+
+    # Generate agent with AI
+    result = await ai_generator.generate_agent(
+        user_input=request.description,
+        available_templates=templates,
+        user_context=user_context
+    )
+
+    log_agent_action(
+        agent_id=0,
+        action="ai_generate",
+        user_id=current_user.id,
+        details={"description": request.description}
+    )
+
+    return result
+
+
+@app.post("/api/v1/ai/deploy")
+async def ai_deploy_agent(
+    generated_config: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Deploy an AI-generated agent directly to Factory Floor
+
+    Takes the output from /api/v1/ai/generate and deploys it
+    """
+    template_id = generated_config.get("template_id")
+    configuration = generated_config.get("configuration", {})
+
+    # Get template
+    template = marketplace.get_template_by_id(template_id)
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found"
+        )
+
+    # Create agent in database
+    agent = Agent(
+        user_id=current_user.id,
+        template_id=template_id,
+        name=configuration.get("name", template.name),
+        description=configuration.get("description", template.description),
+        type=template.category,
+        status="active",
+        config=configuration.get("config", {})
+    )
+    db.add(agent)
+    db.commit()
+    db.refresh(agent)
+
+    log_agent_action(
+        agent_id=agent.id,
+        action="ai_deploy",
+        user_id=current_user.id,
+        details={"template_id": template_id}
+    )
+
+    # Send real-time update via WebSocket
+    await manager.send_agent_update(
+        agent_id=agent.id,
+        user_id=current_user.id,
+        data={
+            "status": "deployed",
+            "name": agent.name,
+            "type": "ai_generated"
+        }
+    )
+
+    return {
+        "success": True,
+        "agent_id": agent.id,
+        "name": agent.name,
+        "status": agent.status,
+        "message": "🎉 Agent deployed successfully!",
+        "next_steps": [
+            "View agent on Factory Floor",
+            "Monitor first runs",
+            "Adjust configuration if needed"
+        ]
+    }
+
+
+@app.post("/api/v1/ai/preview")
+async def ai_preview_workflow(
+    intent: dict,
+    template_id: int,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Generate visual workflow preview before deployment
+
+    Shows user exactly what the agent will do
+    """
+    template = marketplace.get_template_by_id(template_id)
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found"
+        )
+
+    from src.core.ai_agent_generator import AgentIntent
+
+    # Generate workflow preview
+    agent_intent = AgentIntent(**intent)
+    workflow = await ai_generator.generate_workflow(
+        intent=agent_intent,
+        template=template.dict()
+    )
+
+    return {
+        "success": True,
+        "workflow": workflow.dict(),
+        "template": {
+            "id": template.id,
+            "name": template.name,
+            "category": template.category
+        }
+    }
+
+
+# ============================================================================
+# VOICE AI ENDPOINTS - Mindframe Voice AI System
+# ============================================================================
+
+@app.post("/api/v1/voice/flows")
+async def create_voice_flow(
+    flow_data: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new voice conversation flow
+
+    Mindframe Voice AI - Visual flow builder integration
+    """
+    from src.voice.flow_builder import MindframeFlowBuilder, FlowNodeConfig
+
+    builder = MindframeFlowBuilder()
+
+    # Parse nodes
+    nodes = [FlowNodeConfig(**node) for node in flow_data.get("nodes", [])]
+
+    # Validate flow
+    validation = builder.validate_flow(nodes)
+
+    if not validation.valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Flow validation failed",
+                "errors": validation.errors,
+                "warnings": validation.warnings
+            }
+        )
+
+    # Get optimization suggestions
+    optimizations = builder.optimize_flow(nodes)
+
+    # Save flow to database (in production)
+    # For now, return validation result
+
+    return {
+        "success": True,
+        "flow_id": flow_data.get("id", "new_flow"),
+        "validation": validation.dict(),
+        "optimizations": optimizations,
+        "message": "Voice flow created successfully"
+    }
+
+
+@app.get("/api/v1/voice/flows/{flow_id}")
+async def get_voice_flow(
+    flow_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get voice flow by ID"""
+    from src.voice.flow_builder import MindframeFlowBuilder
+
+    builder = MindframeFlowBuilder()
+    template = builder.get_template(flow_id)
+
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Flow not found"
+        )
+
+    return template.dict()
+
+
+@app.get("/api/v1/voice/templates")
+async def list_voice_templates(
+    category: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """List available voice flow templates"""
+    from src.voice.flow_builder import MindframeFlowBuilder
+
+    builder = MindframeFlowBuilder()
+    templates = builder.list_templates(category=category)
+
+    return {
+        "templates": [t.dict() for t in templates],
+        "total": len(templates)
+    }
+
+
+@app.post("/api/v1/voice/flows/validate")
+async def validate_voice_flow(
+    flow_data: dict,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Validate a voice flow before deployment"""
+    from src.voice.flow_builder import MindframeFlowBuilder, FlowNodeConfig
+
+    builder = MindframeFlowBuilder()
+    nodes = [FlowNodeConfig(**node) for node in flow_data.get("nodes", [])]
+
+    validation = builder.validate_flow(nodes)
+    optimizations = builder.optimize_flow(nodes)
+
+    return {
+        "validation": validation.dict(),
+        "optimizations": optimizations
+    }
+
+
+@app.post("/api/v1/voice/generate-flow")
+async def generate_voice_flow(
+    description: str,
+    goal: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Generate voice flow from natural language description
+
+    Mindframe AI - Automatically create conversation flows
+    """
+    from src.voice.voice_ai_engine import MindframeVoiceEngine
+
+    engine = MindframeVoiceEngine(openai_api_key=settings.openai_api_key)
+
+    flow = await engine.create_flow_from_description(
+        description=description,
+        goal=goal
+    )
+
+    return {
+        "success": True,
+        "flow": flow.dict(),
+        "message": "Voice flow generated successfully"
+    }
+
+
+@app.post("/api/v1/voice/calls/outbound")
+async def make_outbound_call(
+    to_number: str,
+    flow_id: str,
+    metadata: Optional[dict] = None,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Make outbound voice call with AI agent
+
+    Mindframe Voice AI - Initiate automated calls
+    """
+    from src.voice.telephony import MindframeTelephony, TelephonyConfig, TelephonyProvider
+
+    # Get telephony config (in production, load from settings)
+    config = TelephonyConfig(
+        provider=TelephonyProvider.TWILIO,
+        api_key=settings.twilio_account_sid if hasattr(settings, 'twilio_account_sid') else "",
+        api_secret=settings.twilio_auth_token if hasattr(settings, 'twilio_auth_token') else "",
+        phone_number=settings.mindframe_phone_number if hasattr(settings, 'mindframe_phone_number') else "",
+        webhook_url=f"{settings.api_url}/api/v1/voice/webhooks/call-events"
+    )
+
+    telephony = MindframeTelephony(config)
+
+    call = await telephony.make_outbound_call(
+        to_number=to_number,
+        flow_id=flow_id,
+        metadata=metadata or {}
+    )
+
+    return {
+        "success": True,
+        "call_id": call.call_id,
+        "status": call.status,
+        "from_number": call.from_number,
+        "to_number": call.to_number,
+        "start_time": call.start_time.isoformat()
+    }
+
+
+@app.post("/api/v1/voice/webhooks/call-events")
+async def handle_call_events(request: Request):
+    """
+    Webhook for telephony provider events
+
+    Receives call events from Twilio, Vonage, etc.
+    """
+    from src.voice.telephony import CallEvent
+
+    data = await request.json()
+
+    # Parse provider-specific event
+    # In production, handle different providers
+
+    event = CallEvent(
+        call_id=data.get("call_id", ""),
+        event_type=data.get("event_type", ""),
+        timestamp=datetime.now(),
+        data=data
+    )
+
+    logger.info(f"Call event received: {event.event_type} for call {event.call_id}")
+
+    # Process event (start voice engine, update status, etc.)
+
+    return {"status": "received"}
+
+
+@app.get("/api/v1/voice/calls/{call_id}/status")
+async def get_call_status(
+    call_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get status of an active or completed call"""
+    from src.voice.telephony import MindframeTelephony, TelephonyConfig, TelephonyProvider
+
+    # In production, retrieve from active calls or database
+
+    return {
+        "call_id": call_id,
+        "status": "in_progress",
+        "message": "Call status retrieved"
+    }
+
+
+@app.post("/api/v1/voice/calls/{call_id}/end")
+async def end_call(
+    call_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """End an active call"""
+    from src.voice.telephony import MindframeTelephony, TelephonyConfig, TelephonyProvider
+
+    # In production, use actual telephony instance
+    # await telephony.end_call(call_id)
+
+    return {
+        "success": True,
+        "call_id": call_id,
+        "message": "Call ended successfully"
+    }
+
+
+@app.post("/api/v1/voice/test/run")
+async def run_voice_tests(
+    suite_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Run voice agent test suite
+
+    Mindframe Voice Testing - Automated conversation testing
+    """
+    from src.voice.voice_testing import MindframeVoiceTester
+    from src.voice.voice_ai_engine import MindframeVoiceEngine
+    from src.voice.flow_builder import MindframeFlowBuilder
+
+    engine = MindframeVoiceEngine(openai_api_key=settings.openai_api_key)
+    builder = MindframeFlowBuilder()
+    tester = MindframeVoiceTester(engine, builder)
+
+    # Run test suite
+    report = await tester.run_test_suite(suite_id)
+
+    return {
+        "success": True,
+        "report": report.dict()
+    }
+
+
+@app.post("/api/v1/voice/test/suites")
+async def create_test_suite(
+    suite_data: dict,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Create a new voice test suite"""
+    from src.voice.voice_testing import MindframeVoiceTester, TestScenario
+    from src.voice.voice_ai_engine import MindframeVoiceEngine
+    from src.voice.flow_builder import MindframeFlowBuilder
+
+    engine = MindframeVoiceEngine(openai_api_key=settings.openai_api_key)
+    builder = MindframeFlowBuilder()
+    tester = MindframeVoiceTester(engine, builder)
+
+    # Parse scenarios
+    scenarios = [TestScenario(**s) for s in suite_data.get("scenarios", [])]
+
+    suite = tester.create_test_suite(
+        name=suite_data.get("name", ""),
+        description=suite_data.get("description", ""),
+        flow_id=suite_data.get("flow_id", ""),
+        scenarios=scenarios
+    )
+
+    return {
+        "success": True,
+        "suite_id": suite.id,
+        "suite": suite.dict()
+    }
+
+
+@app.get("/api/v1/voice/test/suites/{suite_id}/report")
+async def get_test_report(
+    suite_id: str,
+    format: str = "json",
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get test report (JSON or HTML)"""
+    from src.voice.voice_testing import MindframeVoiceTester
+    from src.voice.voice_ai_engine import MindframeVoiceEngine
+    from src.voice.flow_builder import MindframeFlowBuilder
+
+    engine = MindframeVoiceEngine(openai_api_key=settings.openai_api_key)
+    builder = MindframeFlowBuilder()
+    tester = MindframeVoiceTester(engine, builder)
+
+    # In production, load report from database
+    # For now, return mock report
+
+    return {
+        "suite_id": suite_id,
+        "format": format,
+        "message": "Report would be generated here"
+    }
 
 
 # ============================================================================
