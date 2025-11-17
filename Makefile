@@ -1,4 +1,4 @@
-.PHONY: help install dev test clean docker deploy
+﻿.PHONY: help install dev test clean docker deploy
 
 help:
 	@echo "🤖 Botskis - Available Commands"
@@ -11,17 +11,22 @@ help:
 	@echo "make deploy     - Deploy to production"
 	@echo "make health     - Check system health"
 
+PY_CHECK=python scripts/check_python_version.py
+
 install:
 	@echo "📦 Installing dependencies..."
+	@$(PY_CHECK) || exit 1
 	pip install -r requirements.txt
 	@echo "✅ Dependencies installed!"
 
 dev:
 	@echo "🚀 Starting development server..."
+	@$(PY_CHECK) || exit 1
 	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 test:
 	@echo "🧪 Running system tests..."
+	@$(PY_CHECK) || exit 1
 	python test_system.py
 
 clean:

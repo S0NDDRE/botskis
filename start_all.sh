@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Start Mindframe AI (Full Stack - Local Development)
 
 echo "🚀 Starting Mindframe AI - Full Stack"
@@ -8,6 +8,28 @@ echo ""
 # Make scripts executable
 chmod +x start_backend.sh
 chmod +x start_frontend.sh
+
+# Ensure Python version is compatible before starting anything
+PY_CMD=""
+if command -v python3 >/dev/null 2>&1; then
+  PY_CMD=python3
+elif command -v python >/dev/null 2>&1; then
+  PY_CMD=python
+else
+  echo "❌ Python not found on PATH. Install Python 3.11 or 3.12 and retry."
+  exit 1
+fi
+
+if [ -f "scripts/check_python_version.py" ]; then
+  echo "🔎 Verifying Python version with scripts/check_python_version.py"
+  $PY_CMD scripts/check_python_version.py
+  if [ $? -ne 0 ]; then
+    echo "❌ Unsupported Python version detected. See LOCAL_SETUP.md for recommended versions." 
+    exit 1
+  fi
+else
+  echo "⚠️  Version check script not found (scripts/check_python_version.py). Continuing..."
+fi
 
 # Function to cleanup on exit
 cleanup() {
