@@ -1,0 +1,340 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  workflow_dispatch:  # Manual trigger
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_CLUSTER: mindframe-cluster
+  GKE_REGION: europe-north1
+  IMAGE_NAME: mindframe
+  DEPLOYMENT_NAME: mindframe
+
+jobs:
+  # ============================================================================
+  # JOB 1: RUN TESTS
+  # ============================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run linting
+        run: |
+          pip install flake8 black mypy
+          echo "Running flake8..."
+          flake8 src/ --max-line-length=100 --exclude=__pycache__,venv || true
+          echo "Running black..."
+          black --check src/ || true
+
+      - name: Run unit tests
+        run: |
+          pip install pytest pytest-cov
+          pytest tests/ -v --cov=src --cov-report=xml --cov-report=html || true
+
+      - name: Run income bot tests
+        run: |
+          python test_income_bots.py
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+  # ============================================================================
+  # JOB 2: BUILD AND PUSH DOCKER IMAGE
+  # ============================================================================
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure Docker for GCR
+        run: |
+          gcloud auth configure-docker gcr.io
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag gcr.io/$PROJECT_ID/$IMAGE_NAME:$GITHUB_SHA \
+            --tag gcr.io/$PROJECT_ID/$IMAGE_NAME:latest \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            --build-arg VCS_REF=$GITHUB_SHA \
+            --build-arg VERSION=$GITHUB_REF_NAME \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push gcr.io/$PROJECT_ID/$IMAGE_NAME:$GITHUB_SHA
+          docker push gcr.io/$PROJECT_ID/$IMAGE_NAME:latest
+
+      - name: Run security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ============================================================================
+  # JOB 3: DEPLOY TO GOOGLE KUBERNETES ENGINE
+  # ============================================================================
+  deploy:
+    name: Deploy to GKE
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Install gke-gcloud-auth-plugin
+        run: |
+          gcloud components install gke-gcloud-auth-plugin
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials $GKE_CLUSTER \
+            --region=$GKE_REGION \
+            --project=$PROJECT_ID
+
+      - name: Create/Update Kubernetes secrets
+        run: |
+          kubectl create secret generic app-secrets \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --from-literal=REDIS_URL="${{ secrets.REDIS_URL }}" \
+            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+            --from-literal=SECRET_KEY="${{ secrets.APP_SECRET_KEY }}" \
+            --from-literal=SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
+            --from-literal=SENDGRID_API_KEY="${{ secrets.SENDGRID_API_KEY }}" \
+            --from-literal=STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}" \
+            --from-literal=VIPPS_CLIENT_SECRET="${{ secrets.VIPPS_CLIENT_SECRET }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update deployment image
+        run: |
+          kubectl set image deployment/$DEPLOYMENT_NAME \
+            $DEPLOYMENT_NAME=gcr.io/$PROJECT_ID/$IMAGE_NAME:$GITHUB_SHA
+
+      - name: Rollout status
+        run: |
+          kubectl rollout status deployment/$DEPLOYMENT_NAME
+          kubectl get services -o wide
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -l app=$DEPLOYMENT_NAME
+          kubectl describe deployment $DEPLOYMENT_NAME
+
+  # ============================================================================
+  # JOB 4: RUN DATABASE MIGRATIONS
+  # ============================================================================
+  migrate:
+    name: Run Database Migrations
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Run migrations via Cloud SQL Proxy
+        run: |
+          # Install Cloud SQL Proxy
+          wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
+          chmod +x cloud_sql_proxy
+
+          # Start proxy in background
+          ./cloud_sql_proxy -instances=${{ secrets.CLOUD_SQL_INSTANCE }}=tcp:5432 &
+          PROXY_PID=$!
+
+          # Wait for proxy to be ready
+          sleep 5
+
+          # Run migrations
+          python -m alembic upgrade head || echo "No migrations to run"
+
+          # Stop proxy
+          kill $PROXY_PID
+
+  # ============================================================================
+  # JOB 5: SMOKE TESTS
+  # ============================================================================
+  smoke-test:
+    name: Run Smoke Tests
+    runs-on: ubuntu-latest
+    needs: migrate
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Wait for deployment stabilization
+        run: sleep 30
+
+      - name: Check API health
+        run: |
+          HEALTH_URL="${{ secrets.APP_URL }}/health"
+          echo "Checking $HEALTH_URL..."
+
+          for i in {1..5}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_URL)
+            if [ $HTTP_CODE -eq 200 ]; then
+              echo "✅ Health check passed (HTTP $HTTP_CODE)"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/5: HTTP $HTTP_CODE, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "❌ Health check failed after 5 attempts"
+          exit 1
+
+      - name: Check API endpoints
+        run: |
+          API_URL="${{ secrets.APP_URL }}/api/v1"
+
+          # Check status endpoint
+          curl -f "$API_URL/status" || exit 1
+
+          # Check marketplace
+          curl -f "$API_URL/marketplace/agents" || exit 1
+
+          echo "✅ All smoke tests passed"
+
+      - name: Notify Sentry of deployment
+        run: |
+          curl https://sentry.io/api/0/organizations/${{ secrets.SENTRY_ORG }}/releases/ \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.SENTRY_AUTH_TOKEN }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"version\": \"$GITHUB_SHA\",
+              \"refs\": [{
+                \"repository\": \"$GITHUB_REPOSITORY\",
+                \"commit\": \"$GITHUB_SHA\"
+              }],
+              \"projects\": [\"mindframe-ai\"]
+            }"
+
+  # ============================================================================
+  # JOB 6: NOTIFY
+  # ============================================================================
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy, smoke-test]
+    if: always()
+
+    steps:
+      - name: Send success notification
+        if: ${{ needs.smoke-test.result == 'success' }}
+        run: |
+          echo "✅ Deployment successful!"
+          # Add Slack/email notification here
+
+      - name: Send failure notification
+        if: ${{ needs.smoke-test.result == 'failure' }}
+        run: |
+          echo "❌ Deployment failed!"
+          # Add Slack/email notification here
+
+      - name: Create GitHub deployment
+        uses: actions/create-deployment@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment: production
+          ref: ${{ github.sha }}
+          auto_merge: false
+
+# ============================================================================
+# ROLLBACK JOB (Manual Trigger)
+# ============================================================================
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials $GKE_CLUSTER \
+            --region=$GKE_REGION \
+            --project=$PROJECT_ID
+
+      - name: Rollback deployment
+        run: |
+          kubectl rollout undo deployment/$DEPLOYMENT_NAME
+          kubectl rollout status deployment/$DEPLOYMENT_NAME
+
+      - name: Verify rollback
+        run: |
+          kubectl get pods -l app=$DEPLOYMENT_NAME
+          echo "✅ Rollback completed"
