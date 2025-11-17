@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
 from openai import AsyncOpenAI
+from config.settings import settings
 import asyncio
 from pydantic import BaseModel
 import random
@@ -264,7 +265,7 @@ Return ONLY the selected option text, nothing else.
 
             try:
                 response = await self.client.chat.completions.create(
-                    model="gpt-4",
+                    model=settings.openai_model,
                     messages=[
                         {"role": "system", "content": "You are answering surveys realistically based on a user profile."},
                         {"role": "user", "content": prompt}
@@ -296,7 +297,7 @@ Provide a brief, realistic answer (1-2 sentences).
 
             try:
                 response = await self.client.chat.completions.create(
-                    model="gpt-4",
+                    model=settings.openai_model,
                     messages=[
                         {"role": "system", "content": "You are answering surveys realistically."},
                         {"role": "user", "content": prompt}

@@ -16,6 +16,7 @@ This is YOUR competitive advantage. Keep it private!
 """
 from typing import Dict, List, Optional, Any, Callable
 from pydantic import BaseModel
+from config.settings import settings
 from openai import AsyncOpenAI
 from loguru import logger
 from datetime import datetime, timedelta
@@ -161,7 +162,8 @@ class MetaAIGuardian:
         approval_callback: Optional[Callable] = None
     ):
         self.client = AsyncOpenAI(api_key=openai_api_key)
-        self.model = "gpt-4-turbo-preview"
+        # Use the configured model from settings (now raptor-mini-preview by default)
+        self.model = settings.openai_model
         self.issues: List[SystemIssue] = []
         self.improvements: List[ImprovementSuggestion] = []
         self.pending_actions: List[AIAction] = []

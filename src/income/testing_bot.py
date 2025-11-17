@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
 from openai import AsyncOpenAI
+from config.settings import settings
 import asyncio
 from pydantic import BaseModel
 import random
@@ -223,7 +224,7 @@ Feedback (150-250 words):
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",

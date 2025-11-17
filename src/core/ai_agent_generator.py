@@ -13,6 +13,7 @@ UNIQUE FEATURES:
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel
 from openai import AsyncOpenAI
+from config.settings import settings
 from loguru import logger
 import json
 
@@ -64,7 +65,7 @@ class MindframeAgentGenerator:
 
     def __init__(self, openai_api_key: str):
         self.client = AsyncOpenAI(api_key=openai_api_key)
-        self.model = "gpt-4-turbo-preview"
+        self.model = settings.openai_model
 
     async def parse_intent(self, user_input: str, context: Dict = None) -> AgentIntent:
         """

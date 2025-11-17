@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
 from openai import AsyncOpenAI
+from config.settings import settings
 import asyncio
 from pydantic import BaseModel
 import random
@@ -245,7 +246,7 @@ Article:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -286,7 +287,7 @@ Blog Post:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -325,7 +326,7 @@ Product Descriptions:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -359,7 +360,7 @@ Content:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {"role": "system", "content": "You are a professional writer."},
                     {"role": "user", "content": prompt}

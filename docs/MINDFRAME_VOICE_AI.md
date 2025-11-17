@@ -535,7 +535,7 @@ context.language = "de"  # German
 ```python
 engine = MindframeVoiceEngine(
     openai_api_key=api_key,
-    model="gpt-4-turbo-preview",  # Latest model
+    model="raptor-mini-preview",  # Default lightweight model (Raptor mini Preview)
     tts_model="tts-1-hd",          # HD voices
     stt_model="whisper-1"          # Whisper transcription
 )
@@ -619,7 +619,7 @@ print(f"Sentiment: {metrics.sentiment_trend}")
 
 We're not just competing with Synthflow.ai - we're BETTER:
 
-1. **AI-First**: Everything powered by GPT-4
+1. **AI-First**: Default model is Raptor mini (Preview) for most client use-cases
 2. **Integrated**: Works with our Agent Generator seamlessly
 3. **Open**: Not locked to specific providers
 4. **Intelligent**: Real-time intent + sentiment

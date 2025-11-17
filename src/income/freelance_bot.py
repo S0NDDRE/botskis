@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
 from openai import AsyncOpenAI
+from config.settings import settings
 import asyncio
 from pydantic import BaseModel
 
@@ -160,7 +161,7 @@ Cover Letter:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -259,7 +260,7 @@ Deliver professional, well-researched content.
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {"role": "system", "content": "You are a professional content writer."},
                     {"role": "user", "content": prompt}
@@ -308,7 +309,7 @@ Provide comprehensive research findings.
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model=settings.openai_model,
                 messages=[
                     {"role": "system", "content": "You are a professional researcher."},
                     {"role": "user", "content": prompt}

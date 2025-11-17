@@ -16,6 +16,7 @@ We don't just automate calls - we create INTELLIGENT conversations.
 """
 from typing import Dict, List, Optional, Any, Callable
 from pydantic import BaseModel
+from config.settings import settings
 from openai import AsyncOpenAI
 from loguru import logger
 import asyncio
@@ -99,7 +100,8 @@ class MindframeVoiceEngine:
 
     def __init__(self, openai_api_key: str):
         self.client = AsyncOpenAI(api_key=openai_api_key)
-        self.model = "gpt-4-turbo-preview"
+        # Use configured default model (e.g., raptor-mini-preview)
+        self.model = settings.openai_model
         self.tts_model = "tts-1-hd"  # Text-to-speech
         self.stt_model = "whisper-1"  # Speech-to-text
         self.active_conversations: Dict[str, ConversationContext] = {}

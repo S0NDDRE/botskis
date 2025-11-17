@@ -12,6 +12,7 @@ Features:
 """
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
+from config.settings import settings
 from openai import AsyncOpenAI
 from loguru import logger
 import json
@@ -52,7 +53,7 @@ class MindframeAICourseAssistant:
 
     def __init__(self, openai_api_key: str):
         self.client = AsyncOpenAI(api_key=openai_api_key)
-        self.model = "gpt-4-turbo-preview"
+        self.model = settings.openai_model
 
     async def answer_question(
         self,

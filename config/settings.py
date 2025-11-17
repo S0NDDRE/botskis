@@ -26,7 +26,8 @@ class Settings(BaseSettings):
 
     # AI
     openai_api_key: str
-    openai_model: str = "gpt-4-turbo-preview"
+    # Default model for OpenAI requests. Set to Raptor mini (Preview) to use the new lightweight model for all clients.
+    openai_model: str = "raptor-mini-preview"
     anthropic_api_key: Optional[str] = None
     anthropic_model: str = "claude-3-opus-20240229"
 

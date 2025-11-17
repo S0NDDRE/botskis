@@ -5,6 +5,7 @@ Guides users from 0 to running agent in 5 minutes
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from openai import AsyncOpenAI
+from config.settings import settings
 from pydantic import BaseModel
 from loguru import logger
 
@@ -152,7 +153,7 @@ Provide analysis in JSON format:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -224,7 +225,7 @@ Provide recommendations in JSON format:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -307,7 +308,7 @@ Provide customized config in JSON format with:
 
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
